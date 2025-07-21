@@ -8,10 +8,10 @@
 set -e
 
 # The display number you want to use (e.g., :99)
-DISPLAY_NUM=99
+DISPLAY_NUM=71
 
 # Desired screen resolution and color depth (e.g., 1280x1024x24)
-SCREEN_RES=1280x1024x24
+SCREEN_RES=1920x1080
 
 # Check if Xvfb is installed; if not, install it.
 if ! command -v Xvfb &> /dev/null

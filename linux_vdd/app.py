@@ -6,7 +6,7 @@ import sys
 
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, Gdk, Gio, GLib
+from gi.repository import Gtk, Gdk
 
 from . import __version__, __app_id__, __app_name__
 from .display_manager import (
@@ -175,9 +175,9 @@ class DisplayCard(Gtk.ListBoxRow):
 # Main window
 # ---------------------------------------------------------------------------
 
-class MainWindow(Gtk.ApplicationWindow):
+class MainWindow(Gtk.Window):
     def __init__(self, app, manager: DisplayManager):
-        super().__init__(application=app, title=__app_name__)
+        super().__init__(title=__app_name__)
         self.manager = manager
         self.set_default_size(520, 480)
         self.set_position(Gtk.WindowPosition.CENTER)
@@ -202,23 +202,16 @@ class MainWindow(Gtk.ApplicationWindow):
         menu_btn.set_image(
             Gtk.Image.new_from_icon_name("open-menu-symbolic", Gtk.IconSize.BUTTON)
         )
-        menu = Gio.Menu()
-        menu.append("Refresh", "win.refresh")
+        menu = Gtk.Menu()
+        self._add_menu_item(menu, "Refresh", self._on_refresh)
         if manager.is_nvidia():
-            menu.append("Setup Virtual Outputs", "win.nvidia-setup")
-            menu.append("Remove NVIDIA Config", "win.nvidia-teardown")
-        menu.append("Remove All Displays", "win.remove-all")
-        menu.append("About", "win.about")
-        menu_btn.set_menu_model(menu)
+            self._add_menu_item(menu, "Setup Virtual Outputs", self._on_nvidia_setup)
+            self._add_menu_item(menu, "Remove NVIDIA Config", self._on_nvidia_teardown)
+        self._add_menu_item(menu, "Remove All Displays", self._on_remove_all)
+        self._add_menu_item(menu, "About", self._on_about)
+        menu.show_all()
+        menu_btn.set_popup(menu)
         header.pack_end(menu_btn)
-
-        # --- Actions ---
-        self._add_action("refresh", self._on_refresh)
-        self._add_action("remove-all", self._on_remove_all)
-        self._add_action("about", self._on_about)
-        if manager.is_nvidia():
-            self._add_action("nvidia-setup", self._on_nvidia_setup)
-            self._add_action("nvidia-teardown", self._on_nvidia_teardown)
 
         # Ctrl+N
         accel = Gtk.AccelGroup()
@@ -302,10 +295,10 @@ class MainWindow(Gtk.ApplicationWindow):
         self._refresh_list()
         self.show_all()
 
-    def _add_action(self, name: str, callback):
-        action = Gio.SimpleAction.new(name, None)
-        action.connect("activate", lambda a, p: callback())
-        self.add_action(action)
+    def _add_menu_item(self, menu: Gtk.Menu, label: str, callback):
+        item = Gtk.MenuItem(label=label)
+        item.connect("activate", lambda _: callback())
+        menu.append(item)
 
     # -- NVIDIA info bar --
 
@@ -607,32 +600,18 @@ class MainWindow(Gtk.ApplicationWindow):
 # Application
 # ---------------------------------------------------------------------------
 
-class VDDApplication(Gtk.Application):
-    def __init__(self):
-        super().__init__(
-            application_id=__app_id__,
-            flags=Gio.ApplicationFlags.FLAGS_NONE,
-        )
-        self.manager = DisplayManager()
-        self.window = None
-
-    def do_startup(self):
-        Gtk.Application.do_startup(self)
-        css_provider = Gtk.CssProvider()
-        css_provider.load_from_data(CSS.encode())
-        screen = Gdk.Screen.get_default()
-        if screen:
-            Gtk.StyleContext.add_provider_for_screen(
-                screen, css_provider,
-                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
-            )
-
-    def do_activate(self):
-        if not self.window:
-            self.window = MainWindow(self, self.manager)
-        self.window.present()
-
-
 def main():
-    app = VDDApplication()
-    return app.run(sys.argv)
+    css_provider = Gtk.CssProvider()
+    css_provider.load_from_data(CSS.encode())
+    screen = Gdk.Screen.get_default()
+    if screen:
+        Gtk.StyleContext.add_provider_for_screen(
+            screen, css_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+
+    manager = DisplayManager()
+    window = MainWindow(None, manager)
+    window.connect("destroy", Gtk.main_quit)
+    Gtk.main()
+    return 0

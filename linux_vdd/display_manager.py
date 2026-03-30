@@ -1154,7 +1154,7 @@ class DisplayManager:
         self._save_state()
 
     def remove_display(self, vd: VirtualDisplay):
-        """Remove a virtual display."""
+        """Remove a virtual display and update NVIDIA config to drop the output."""
         # Turn off the output
         try:
             _xrandr("--output", vd.output, "--off")
@@ -1174,6 +1174,47 @@ class DisplayManager:
         if vd in self.managed_displays:
             self.managed_displays.remove(vd)
         self._save_state()
+
+        # Update NVIDIA xorg.conf to remove this output from ConnectedMonitor
+        if self.is_nvidia() and _nvidia_conf_exists():
+            self._nvidia_remove_output_from_conf(vd.output)
+
+    def _nvidia_remove_output_from_conf(self, output_name: str):
+        """Remove an output from the NVIDIA xorg.conf ConnectedMonitor list."""
+        conf_outputs = _nvidia_read_conf_outputs()
+        if output_name not in conf_outputs:
+            return
+
+        remaining_virtual = [
+            o for o in conf_outputs
+            if o != output_name
+        ]
+
+        # Find the primary (non-virtual) output
+        primary = self.nvidia_get_primary_output()
+        if not primary:
+            return
+
+        remaining_virtual = [o for o in remaining_virtual if o != primary]
+
+        if not remaining_virtual:
+            # No virtual outputs left — remove the entire config
+            try:
+                _pkexec_remove_file(str(XORG_CONF_FILE))
+                _pkexec_remove_file(str(EDID_FILE))
+                _remove_gdm_monitors_xml()
+            except RuntimeError:
+                pass
+        else:
+            # Rewrite config with remaining virtual outputs
+            conf = _nvidia_generate_conf(primary, remaining_virtual)
+            edid_bytes = _generate_virtual_edid()
+            try:
+                _pkexec_write_file(str(XORG_CONF_FILE), conf)
+                _pkexec_write_file(str(EDID_FILE), edid_bytes)
+                _write_gdm_monitors_xml(primary, remaining_virtual)
+            except RuntimeError:
+                pass
 
     def remove_all(self):
         for vd in list(self.managed_displays):

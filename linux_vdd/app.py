@@ -447,10 +447,17 @@ class MainWindow(Gtk.Window):
             buttons=Gtk.ButtonsType.NONE,
             text=f"Remove {vd.output}?",
         )
-        dialog.format_secondary_text(
+        msg = (
             f"This will disable the virtual display at "
-            f"{vd.width}x{vd.height} @ {vd.refresh:.0f}Hz."
+            f"{vd.width}x{vd.height} @ {vd.refresh:.0f}Hz "
+            f"and remove it from the NVIDIA configuration."
         )
+        if self.manager.is_nvidia():
+            msg += (
+                "\n\nThe output will disappear from Display Settings "
+                "after you log out and back in."
+            )
+        dialog.format_secondary_text(msg)
         dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
         rm = dialog.add_button("Remove", Gtk.ResponseType.OK)
         rm.get_style_context().add_class("destructive-action")

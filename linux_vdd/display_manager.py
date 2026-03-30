@@ -734,18 +734,40 @@ class DisplayManager:
             if vname in tracked_names:
                 continue
             out = output_map.get(vname)
-            if not out or not out.active or not out.current_mode:
+            if not out or not out.connected:
                 continue
-            mode = out.current_mode
-            vd = VirtualDisplay(
-                output=vname,
-                mode_name=mode.name,
-                width=mode.width,
-                height=mode.height,
-                refresh=mode.refresh,
-                position="",
-                active=True,
-            )
+            if out.active and out.current_mode:
+                mode = out.current_mode
+                vd = VirtualDisplay(
+                    output=vname,
+                    mode_name=mode.name,
+                    width=mode.width,
+                    height=mode.height,
+                    refresh=mode.refresh,
+                    position="",
+                    active=True,
+                )
+            else:
+                # Inactive but configured — adopt with default resolution
+                preferred = None
+                for m in out.modes:
+                    if m.preferred:
+                        preferred = m
+                        break
+                if not preferred and out.modes:
+                    preferred = out.modes[0]
+                w = preferred.width if preferred else 1920
+                h = preferred.height if preferred else 1080
+                r = preferred.refresh if preferred else 60.0
+                vd = VirtualDisplay(
+                    output=vname,
+                    mode_name=f"{w}x{h}",
+                    width=w,
+                    height=h,
+                    refresh=r,
+                    position="",
+                    active=False,
+                )
             self.managed_displays.append(vd)
             adopted = True
 

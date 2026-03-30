@@ -67,6 +67,8 @@ class NvidiaSetupDialog(Gtk.Dialog):
             "NVIDIA requires a one-time configuration to enable virtual "
             "display outputs. This writes an X11 config file and a virtual "
             "EDID so the GPU treats selected outputs as connected monitors.\n\n"
+            "Select one output per virtual display you need. For example, "
+            "if you want 2 virtual displays, enable 2 outputs.\n\n"
             "<b>You will need to log out and back in after setup.</b>"
         )
         info_label.set_line_wrap(True)
@@ -100,9 +102,10 @@ class NvidiaSetupDialog(Gtk.Dialog):
         if new_candidates:
             if existing_virtual:
                 content.pack_start(self._make_dim_label("Add more outputs:"), False, False, 4)
-            for name in new_candidates:
+            for i, name in enumerate(new_candidates):
                 cb = Gtk.CheckButton(label=name)
-                cb.set_active(not existing_virtual)  # Auto-select only on first setup
+                # On first setup, select only the first one
+                cb.set_active(i == 0 and not existing_virtual)
                 content.pack_start(cb, False, False, 0)
                 self.output_checks.append((cb, name))
         elif not existing_virtual:

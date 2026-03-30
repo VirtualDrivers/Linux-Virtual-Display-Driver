@@ -1049,32 +1049,89 @@ class DisplayManager:
 
         return vd
 
-    def remove_display(self, vd: VirtualDisplay):
-        """Remove a virtual display."""
-        errors = []
+    def enable_display(self, vd: VirtualDisplay,
+                       position: str = "right-of",
+                       relative_to: Optional[str] = None):
+        """Enable an inactive virtual display."""
+        if vd.active:
+            return
+
+        # Ensure the mode exists on the output
+        mode_name = f"{vd.width}x{vd.height}"
+        ml = generate_modeline(vd.width, vd.height, vd.refresh)
+        try:
+            _xrandr("--newmode", *ml["modeline_args"])
+        except subprocess.CalledProcessError as e:
+            if "already exists" not in (e.stderr or ""):
+                raise RuntimeError(f"Failed to create mode:\n{e.stderr}") from e
+
+        try:
+            _xrandr("--addmode", vd.output, ml["name"])
+        except subprocess.CalledProcessError as e:
+            if "already exists" not in (e.stderr or ""):
+                raise RuntimeError(f"Failed to add mode to {vd.output}:\n{e.stderr}") from e
+
+        if relative_to is None:
+            primary = self.get_primary_output()
+            if primary:
+                relative_to = primary.name
+
+        cmd = ["--output", vd.output, "--mode", ml["name"]]
+        if relative_to:
+            pos_map = {
+                "right-of": "--right-of",
+                "left-of": "--left-of",
+                "above": "--above",
+                "below": "--below",
+                "same-as": "--same-as",
+            }
+            flag = pos_map.get(position, "--right-of")
+            cmd.extend([flag, relative_to])
+            vd.position = f"{flag} {relative_to}"
+
+        try:
+            _xrandr(*cmd)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Failed to enable {vd.output}:\n{e.stderr}") from e
+
+        vd.mode_name = ml["name"]
+        vd.active = True
+        self._save_state()
+
+    def disable_display(self, vd: VirtualDisplay):
+        """Disable an active virtual display without removing it."""
+        if not vd.active:
+            return
 
         try:
             _xrandr("--output", vd.output, "--off")
         except subprocess.CalledProcessError as e:
-            errors.append(f"Disable output: {e.stderr}")
+            raise RuntimeError(f"Failed to disable {vd.output}:\n{e.stderr}") from e
 
+        vd.active = False
+        self._save_state()
+
+    def remove_display(self, vd: VirtualDisplay):
+        """Remove a virtual display."""
+        # Turn off the output
+        try:
+            _xrandr("--output", vd.output, "--off")
+        except subprocess.CalledProcessError:
+            pass  # Already off
+
+        # Try to clean up custom modes (ignore errors for built-in EDID modes)
         try:
             _xrandr("--delmode", vd.output, vd.mode_name)
-        except subprocess.CalledProcessError as e:
-            errors.append(f"Remove mode: {e.stderr}")
-
+        except subprocess.CalledProcessError:
+            pass
         try:
             _xrandr("--rmmode", vd.mode_name)
-        except subprocess.CalledProcessError as e:
-            if "currently used" not in (e.stderr or ""):
-                errors.append(f"Delete mode: {e.stderr}")
+        except subprocess.CalledProcessError:
+            pass
 
         if vd in self.managed_displays:
             self.managed_displays.remove(vd)
         self._save_state()
-
-        if errors:
-            raise RuntimeError("Partial cleanup:\n" + "\n".join(errors))
 
     def remove_all(self):
         for vd in list(self.managed_displays):

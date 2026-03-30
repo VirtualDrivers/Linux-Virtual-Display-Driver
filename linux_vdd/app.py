@@ -100,7 +100,7 @@ CSS = """
 # ---------------------------------------------------------------------------
 
 class DisplayCard(Gtk.ListBoxRow):
-    def __init__(self, vd: VirtualDisplay, on_remove):
+    def __init__(self, vd: VirtualDisplay, on_remove, on_toggle):
         super().__init__()
         self.vd = vd
         self.set_activatable(False)
@@ -135,6 +135,19 @@ class DisplayCard(Gtk.ListBoxRow):
             info_box.pack_start(pos_label, False, False, 0)
 
         frame.pack_start(info_box, True, True, 0)
+
+        # Toggle button
+        if vd.active:
+            toggle_btn = Gtk.Button(label="Disable")
+            toggle_btn.set_tooltip_text("Turn off this virtual display")
+        else:
+            toggle_btn = Gtk.Button(label="Enable")
+            toggle_btn.get_style_context().add_class("suggested-action")
+            toggle_btn.set_tooltip_text("Turn on this virtual display")
+        toggle_btn.get_style_context().add_class("remove-button")
+        toggle_btn.set_valign(Gtk.Align.CENTER)
+        toggle_btn.connect("clicked", lambda _: on_toggle(vd))
+        frame.pack_start(toggle_btn, False, False, 0)
 
         if vd.active:
             badge = Gtk.Label(label="ACTIVE")
@@ -331,7 +344,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
         if self.manager.managed_displays:
             for vd in self.manager.managed_displays:
-                self.listbox.add(DisplayCard(vd, self._on_remove_display))
+                self.listbox.add(DisplayCard(vd, self._on_remove_display, self._on_toggle_display))
             self.stack.set_visible_child_name("list")
         else:
             self.stack.set_visible_child_name("empty")
@@ -458,6 +471,19 @@ class MainWindow(Gtk.ApplicationWindow):
                 self._refresh_list()
             except RuntimeError as e:
                 self._show_error("Error removing display", str(e))
+
+    # -- Toggle display --
+
+    def _on_toggle_display(self, vd: VirtualDisplay):
+        try:
+            if vd.active:
+                self.manager.disable_display(vd)
+            else:
+                self.manager.enable_display(vd)
+            self._refresh_list()
+        except RuntimeError as e:
+            action = "disable" if vd.active else "enable"
+            self._show_error(f"Failed to {action} display", str(e))
 
     # -- NVIDIA setup/teardown --
 

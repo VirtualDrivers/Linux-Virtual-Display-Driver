@@ -667,8 +667,11 @@ class DisplayManager:
         for vd in self.managed_displays:
             out = output_map.get(vd.output)
             if out and out.active and out.current_mode:
-                vd.active = (out.current_mode.width == vd.width and
-                             out.current_mode.height == vd.height)
+                vd.active = True
+                # Update stored dimensions to match what's actually running
+                vd.width = out.current_mode.width
+                vd.height = out.current_mode.height
+                vd.refresh = out.current_mode.refresh
             else:
                 vd.active = False
 
@@ -1078,27 +1081,44 @@ class DisplayManager:
         if vd.active:
             return
 
-        # Ensure the mode exists on the output
-        mode_name = f"{vd.width}x{vd.height}"
-        ml = generate_modeline(vd.width, vd.height, vd.refresh)
-        try:
-            _xrandr("--newmode", *ml["modeline_args"])
-        except subprocess.CalledProcessError as e:
-            if "already exists" not in (e.stderr or ""):
-                raise RuntimeError(f"Failed to create mode:\n{e.stderr}") from e
+        # Check if the output already has a matching built-in mode
+        outputs = parse_xrandr()
+        out = None
+        for o in outputs:
+            if o.name == vd.output:
+                out = o
+                break
 
-        try:
-            _xrandr("--addmode", vd.output, ml["name"])
-        except subprocess.CalledProcessError as e:
-            if "already exists" not in (e.stderr or ""):
-                raise RuntimeError(f"Failed to add mode to {vd.output}:\n{e.stderr}") from e
+        use_mode = f"{vd.width}x{vd.height}"
+        has_builtin = False
+        if out:
+            for m in out.modes:
+                if m.width == vd.width and m.height == vd.height:
+                    has_builtin = True
+                    use_mode = f"{m.width}x{m.height}"
+                    break
+
+        if not has_builtin:
+            # Create a custom modeline
+            ml = generate_modeline(vd.width, vd.height, vd.refresh)
+            use_mode = ml["name"]
+            try:
+                _xrandr("--newmode", *ml["modeline_args"])
+            except subprocess.CalledProcessError as e:
+                if "already exists" not in (e.stderr or ""):
+                    raise RuntimeError(f"Failed to create mode:\n{e.stderr}") from e
+            try:
+                _xrandr("--addmode", vd.output, use_mode)
+            except subprocess.CalledProcessError as e:
+                if "already exists" not in (e.stderr or ""):
+                    raise RuntimeError(f"Failed to add mode to {vd.output}:\n{e.stderr}") from e
 
         if relative_to is None:
             primary = self.get_primary_output()
             if primary:
                 relative_to = primary.name
 
-        cmd = ["--output", vd.output, "--mode", ml["name"]]
+        cmd = ["--output", vd.output, "--mode", use_mode]
         if relative_to:
             pos_map = {
                 "right-of": "--right-of",
@@ -1116,7 +1136,7 @@ class DisplayManager:
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Failed to enable {vd.output}:\n{e.stderr}") from e
 
-        vd.mode_name = ml["name"]
+        vd.mode_name = use_mode
         vd.active = True
         self._save_state()
 

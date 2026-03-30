@@ -523,7 +523,7 @@ class MainWindow(Gtk.ApplicationWindow):
             ),
             website="https://github.com/VirtualDrivers/Linux-Virtual-Display-Driver",
             website_label="GitHub",
-            license_type=Gtk.License.MIT_X11,
+            license_type=Gtk.License.GPL_3_0,
             authors=["Mike Rodriguez (MikeTheTech)", "VirtualDrivers contributors"],
             logo_icon_name="video-display",
         )

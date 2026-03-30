@@ -1,16 +1,48 @@
-MIT License
+Linux Virtual Display Driver
+Copyright (c) 2024-2026 VirtualDrivers / Mike Rodriguez (MikeTheTech)
 
-Copyright (c) 2024 Virtual Display
+This software is dual-licensed:
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+================================================================================
+  PERSONAL / NON-COMMERCIAL USE — GNU General Public License v3.0
+================================================================================
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+This program is free software for personal, educational, and non-commercial use:
+you can redistribute it and/or modify it under the terms of the GNU General
+Public License as published by the Free Software Foundation, either version 3
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
+
+================================================================================
+  COMMERCIAL USE — License Required
+================================================================================
+
+Commercial use of this software — including but not limited to use in commercial
+products, services, SaaS platforms, or internal business tools deployed for
+profit — requires a separate commercial license from the copyright holder.
+
+To request a commercial license, contact:
+
+  GitHub:  https://github.com/VirtualDrivers
+  Author:  Mike Rodriguez (MikeTheTech)
+
+"Commercial use" includes, but is not limited to:
+  - Selling or distributing this software or derivative works for profit
+  - Embedding this software in a commercial product or service
+  - Using this software to provide paid services to third parties
+  - Deploying this software in a business environment for revenue-generating
+    activities
+
+Personal projects, hobby use, academic research, and non-profit organizations
+are considered non-commercial use and are covered under the GPLv3 terms above.
+
+================================================================================
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,

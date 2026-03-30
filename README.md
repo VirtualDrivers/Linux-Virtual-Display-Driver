@@ -136,4 +136,8 @@ uninstall.sh           # Uninstaller
 
 ## License
 
-[MIT](LICENSE)
+**Personal / Non-Commercial Use:** [GNU GPLv3](https://www.gnu.org/licenses/gpl-3.0.html) — free to use, modify, and redistribute.
+
+**Commercial Use:** Requires a separate license. Contact [VirtualDrivers](https://github.com/VirtualDrivers) for commercial licensing.
+
+See [LICENSE](LICENSE) for full details.

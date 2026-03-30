@@ -441,31 +441,52 @@ class MainWindow(Gtk.Window):
     # -- Remove display --
 
     def _on_remove_display(self, vd: VirtualDisplay):
-        dialog = Gtk.MessageDialog(
-            transient_for=self, modal=True,
-            message_type=Gtk.MessageType.QUESTION,
-            buttons=Gtk.ButtonsType.NONE,
-            text=f"Remove {vd.output}?",
-        )
-        msg = (
-            f"This will disable the virtual display at "
-            f"{vd.width}x{vd.height} @ {vd.refresh:.0f}Hz "
-            f"and remove it from the NVIDIA configuration."
-        )
         if self.manager.is_nvidia():
-            msg += (
-                "\n\nThe output will disappear from Display Settings "
-                "after you log out and back in."
+            dialog = Gtk.MessageDialog(
+                transient_for=self, modal=True,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.NONE,
+                text=f"Remove {vd.output}?",
             )
-        dialog.format_secondary_text(msg)
-        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
-        rm = dialog.add_button("Remove", Gtk.ResponseType.OK)
-        rm.get_style_context().add_class("destructive-action")
+            dialog.format_secondary_text(
+                f"This will remove the {vd.width}x{vd.height} @ {vd.refresh:.0f}Hz "
+                f"virtual display and update the NVIDIA configuration.\n\n"
+                f"You will need to log out and back in for the output "
+                f"to fully disappear from Display Settings.\n\n"
+                f"If you just want to turn it off temporarily, use "
+                f"Disable instead."
+            )
+            dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+            disable_btn = dialog.add_button("Disable Instead", Gtk.ResponseType.APPLY)
+            disable_btn.get_style_context().add_class("suggested-action")
+            rm = dialog.add_button("Remove Permanently", Gtk.ResponseType.OK)
+            rm.get_style_context().add_class("destructive-action")
+        else:
+            dialog = Gtk.MessageDialog(
+                transient_for=self, modal=True,
+                message_type=Gtk.MessageType.QUESTION,
+                buttons=Gtk.ButtonsType.NONE,
+                text=f"Remove {vd.output}?",
+            )
+            dialog.format_secondary_text(
+                f"This will disable the virtual display at "
+                f"{vd.width}x{vd.height} @ {vd.refresh:.0f}Hz."
+            )
+            dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+            rm = dialog.add_button("Remove", Gtk.ResponseType.OK)
+            rm.get_style_context().add_class("destructive-action")
 
         response = dialog.run()
         dialog.destroy()
 
-        if response == Gtk.ResponseType.OK:
+        if response == Gtk.ResponseType.APPLY:
+            # User chose "Disable Instead"
+            try:
+                self.manager.disable_display(vd)
+                self._refresh_list()
+            except RuntimeError as e:
+                self._show_error("Failed to disable display", str(e))
+        elif response == Gtk.ResponseType.OK:
             try:
                 self.manager.remove_display(vd)
                 self._refresh_list()

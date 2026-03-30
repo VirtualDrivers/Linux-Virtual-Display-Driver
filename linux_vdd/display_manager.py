@@ -945,10 +945,10 @@ class DisplayManager:
     def get_available_outputs(self) -> list[Output]:
         """Get outputs that can host a new virtual display."""
         outputs = parse_xrandr()
-        used = {vd.output for vd in self.managed_displays if vd.active}
+        managed_names = {vd.output for vd in self.managed_displays}
         available = []
         for o in outputs:
-            if o.name in used:
+            if o.name in managed_names:
                 continue
             # For NVIDIA setups: use connected but inactive outputs
             # (ConnectedMonitor makes them show as connected)
@@ -1139,6 +1139,35 @@ class DisplayManager:
         vd.mode_name = use_mode
         vd.active = True
         self._save_state()
+
+    def edit_display(self, vd: VirtualDisplay, width: int, height: int,
+                     refresh: float, position: str = "right-of",
+                     relative_to: Optional[str] = None,
+                     reduced_blanking: bool = False):
+        """Edit an existing virtual display's settings.
+
+        Disables the current config and re-enables with new parameters.
+        """
+        was_active = vd.active
+
+        # Turn off if active
+        if was_active:
+            try:
+                _xrandr("--output", vd.output, "--off")
+            except subprocess.CalledProcessError:
+                pass
+
+        # Update stored settings
+        vd.width = width
+        vd.height = height
+        vd.refresh = refresh
+        vd.active = False
+
+        if was_active:
+            # Re-enable with new settings
+            self.enable_display(vd, position=position, relative_to=relative_to)
+        else:
+            self._save_state()
 
     def disable_display(self, vd: VirtualDisplay):
         """Disable an active virtual display without removing it."""

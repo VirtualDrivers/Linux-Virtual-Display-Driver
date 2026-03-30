@@ -13,7 +13,7 @@ from .display_manager import (
     DisplayManager, VirtualDisplay,
     detect_display_server, check_xrandr_available,
 )
-from .dialogs import AddDisplayDialog, NvidiaSetupDialog
+from .dialogs import AddDisplayDialog, EditDisplayDialog, NvidiaSetupDialog
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +100,7 @@ CSS = """
 # ---------------------------------------------------------------------------
 
 class DisplayCard(Gtk.ListBoxRow):
-    def __init__(self, vd: VirtualDisplay, on_remove, on_toggle):
+    def __init__(self, vd: VirtualDisplay, on_remove, on_toggle, on_edit):
         super().__init__()
         self.vd = vd
         self.set_activatable(False)
@@ -136,6 +136,19 @@ class DisplayCard(Gtk.ListBoxRow):
 
         frame.pack_start(info_box, True, True, 0)
 
+        # Button box for actions
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        btn_box.set_valign(Gtk.Align.CENTER)
+
+        # Edit button
+        edit_btn = Gtk.Button.new_from_icon_name(
+            "document-edit-symbolic", Gtk.IconSize.BUTTON
+        )
+        edit_btn.set_tooltip_text("Edit resolution, refresh rate, or position")
+        edit_btn.get_style_context().add_class("remove-button")
+        edit_btn.connect("clicked", lambda _: on_edit(vd))
+        btn_box.pack_start(edit_btn, False, False, 0)
+
         # Toggle button
         if vd.active:
             toggle_btn = Gtk.Button(label="Disable")
@@ -145,10 +158,10 @@ class DisplayCard(Gtk.ListBoxRow):
             toggle_btn.get_style_context().add_class("suggested-action")
             toggle_btn.set_tooltip_text("Turn on this virtual display")
         toggle_btn.get_style_context().add_class("remove-button")
-        toggle_btn.set_valign(Gtk.Align.CENTER)
         toggle_btn.connect("clicked", lambda _: on_toggle(vd))
-        frame.pack_start(toggle_btn, False, False, 0)
+        btn_box.pack_start(toggle_btn, False, False, 0)
 
+        # Status badge
         if vd.active:
             badge = Gtk.Label(label="ACTIVE")
             badge.get_style_context().add_class("display-badge")
@@ -156,17 +169,19 @@ class DisplayCard(Gtk.ListBoxRow):
             badge = Gtk.Label(label="INACTIVE")
             badge.get_style_context().add_class("display-badge-inactive")
         badge.set_valign(Gtk.Align.CENTER)
-        frame.pack_start(badge, False, False, 0)
+        btn_box.pack_start(badge, False, False, 4)
 
+        # Remove button
         remove_btn = Gtk.Button.new_from_icon_name(
             "edit-delete-symbolic", Gtk.IconSize.BUTTON
         )
         remove_btn.set_tooltip_text("Remove this virtual display")
         remove_btn.get_style_context().add_class("destructive-action")
         remove_btn.get_style_context().add_class("remove-button")
-        remove_btn.set_valign(Gtk.Align.CENTER)
         remove_btn.connect("clicked", lambda _: on_remove(vd))
-        frame.pack_start(remove_btn, False, False, 0)
+        btn_box.pack_start(remove_btn, False, False, 0)
+
+        frame.pack_start(btn_box, False, False, 0)
 
         self.add(frame)
 
@@ -337,7 +352,10 @@ class MainWindow(Gtk.Window):
 
         if self.manager.managed_displays:
             for vd in self.manager.managed_displays:
-                self.listbox.add(DisplayCard(vd, self._on_remove_display, self._on_toggle_display))
+                self.listbox.add(DisplayCard(
+                    vd, self._on_remove_display,
+                    self._on_toggle_display, self._on_edit_display,
+                ))
             self.stack.set_visible_child_name("list")
         else:
             self.stack.set_visible_child_name("empty")
@@ -505,6 +523,31 @@ class MainWindow(Gtk.Window):
         except RuntimeError as e:
             action = "disable" if vd.active else "enable"
             self._show_error(f"Failed to {action} display", str(e))
+
+    # -- Edit display --
+
+    def _on_edit_display(self, vd: VirtualDisplay):
+        dialog = EditDisplayDialog(self, self.manager, vd)
+        response = dialog.run()
+
+        if response == Gtk.ResponseType.OK:
+            values = dialog.get_values()
+            dialog.destroy()
+            try:
+                self.manager.edit_display(
+                    vd,
+                    width=values["width"],
+                    height=values["height"],
+                    refresh=values["refresh"],
+                    position=values["position"],
+                    relative_to=values["relative_to"],
+                    reduced_blanking=values["reduced_blanking"],
+                )
+                self._refresh_list()
+            except RuntimeError as e:
+                self._show_error("Failed to edit display", str(e))
+        else:
+            dialog.destroy()
 
     # -- NVIDIA setup/teardown --
 

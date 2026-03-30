@@ -6,7 +6,7 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk
 
-from .display_manager import DisplayManager
+from .display_manager import DisplayManager, VirtualDisplay
 
 
 # Common resolution presets: (label, width, height)
@@ -335,6 +335,189 @@ class AddDisplayDialog(Gtk.Dialog):
             "height": height,
             "refresh": refresh,
             "output": output,
+            "position": position,
+            "relative_to": relative_to,
+            "reduced_blanking": self.reduced_check.get_active(),
+        }
+
+
+class EditDisplayDialog(Gtk.Dialog):
+    """Dialog for editing an existing virtual display's settings."""
+
+    def __init__(self, parent: Gtk.Window, manager: DisplayManager,
+                 vd: VirtualDisplay):
+        super().__init__(
+            title=f"Edit {vd.output}",
+            transient_for=parent,
+            modal=True,
+            destroy_with_parent=True,
+        )
+        self.manager = manager
+        self.vd = vd
+        self.set_default_size(420, -1)
+        self.set_resizable(False)
+
+        self.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        apply_btn = self.add_button("Apply", Gtk.ResponseType.OK)
+        apply_btn.get_style_context().add_class("suggested-action")
+
+        content = self.get_content_area()
+        content.set_spacing(12)
+        content.set_margin_start(20)
+        content.set_margin_end(20)
+        content.set_margin_top(16)
+        content.set_margin_bottom(8)
+
+        # Output name (read-only)
+        out_label = Gtk.Label()
+        out_label.set_markup(f"<b>Output:</b>  {vd.output}")
+        out_label.set_halign(Gtk.Align.START)
+        content.pack_start(out_label, False, False, 0)
+
+        # --- Resolution ---
+        content.pack_start(self._make_section_label("Resolution"), False, False, 4)
+
+        self.res_combo = Gtk.ComboBoxText()
+        current_preset_idx = -1
+        for i, (label, w, h) in enumerate(RESOLUTION_PRESETS):
+            self.res_combo.append_text(label)
+            if w == vd.width and h == vd.height:
+                current_preset_idx = i
+        if current_preset_idx >= 0:
+            self.res_combo.set_active(current_preset_idx)
+        else:
+            self.res_combo.set_active(len(RESOLUTION_PRESETS) - 1)  # Custom
+        self.res_combo.connect("changed", self._on_res_preset_changed)
+        content.pack_start(self.res_combo, False, False, 0)
+
+        self.custom_res_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.width_entry = Gtk.SpinButton.new_with_range(320, 15360, 1)
+        self.width_entry.set_value(vd.width)
+        self.width_entry.set_numeric(True)
+        self.height_entry = Gtk.SpinButton.new_with_range(200, 8640, 1)
+        self.height_entry.set_value(vd.height)
+        self.height_entry.set_numeric(True)
+        self.custom_res_box.pack_start(self.width_entry, True, True, 0)
+        self.custom_res_box.pack_start(Gtk.Label(label="x"), False, False, 0)
+        self.custom_res_box.pack_start(self.height_entry, True, True, 0)
+        px = Gtk.Label(label="px")
+        px.get_style_context().add_class("dim-label")
+        self.custom_res_box.pack_start(px, False, False, 0)
+        if current_preset_idx >= 0:
+            self.custom_res_box.set_no_show_all(True)
+        content.pack_start(self.custom_res_box, False, False, 0)
+
+        # --- Refresh Rate ---
+        content.pack_start(self._make_section_label("Refresh Rate"), False, False, 4)
+
+        self.refresh_combo = Gtk.ComboBoxText()
+        current_refresh_idx = -1
+        for i, r in enumerate(REFRESH_PRESETS):
+            self.refresh_combo.append_text(f"{r} Hz")
+            if abs(r - vd.refresh) < 1:
+                current_refresh_idx = i
+        self.refresh_combo.append_text("Custom")
+        if current_refresh_idx >= 0:
+            self.refresh_combo.set_active(current_refresh_idx)
+        else:
+            self.refresh_combo.set_active(len(REFRESH_PRESETS))  # Custom
+        self.refresh_combo.connect("changed", self._on_refresh_preset_changed)
+        content.pack_start(self.refresh_combo, False, False, 0)
+
+        self.custom_refresh_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.refresh_entry = Gtk.SpinButton.new_with_range(1, 500, 1)
+        self.refresh_entry.set_value(vd.refresh)
+        self.refresh_entry.set_numeric(True)
+        hz = Gtk.Label(label="Hz")
+        hz.get_style_context().add_class("dim-label")
+        self.custom_refresh_box.pack_start(self.refresh_entry, True, True, 0)
+        self.custom_refresh_box.pack_start(hz, False, False, 0)
+        if current_refresh_idx >= 0:
+            self.custom_refresh_box.set_no_show_all(True)
+        content.pack_start(self.custom_refresh_box, False, False, 0)
+
+        # --- Position ---
+        content.pack_start(self._make_section_label("Position"), False, False, 4)
+
+        pos_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.pos_combo = Gtk.ComboBoxText()
+        for label, _val in POSITION_OPTIONS:
+            self.pos_combo.append_text(label)
+        self.pos_combo.set_active(0)
+        pos_box.pack_start(self.pos_combo, True, True, 0)
+
+        self.relative_combo = Gtk.ComboBoxText()
+        active_outputs = manager.get_active_outputs()
+        for out in active_outputs:
+            if out.name == vd.output:
+                continue
+            label = out.name
+            if out.current_mode:
+                label += f" ({out.current_mode.width}x{out.current_mode.height})"
+            self.relative_combo.append_text(label)
+        if active_outputs:
+            self.relative_combo.set_active(0)
+        pos_box.pack_start(self.relative_combo, True, True, 0)
+        content.pack_start(pos_box, False, False, 0)
+
+        # --- Reduced blanking ---
+        self.reduced_check = Gtk.CheckButton(label="Reduced blanking (lower bandwidth)")
+        content.pack_start(self.reduced_check, False, False, 8)
+
+        content.show_all()
+
+    def _make_section_label(self, text: str) -> Gtk.Label:
+        label = Gtk.Label()
+        label.set_markup(f"<b>{text}</b>")
+        label.set_halign(Gtk.Align.START)
+        return label
+
+    def _on_res_preset_changed(self, combo):
+        idx = combo.get_active()
+        if idx == len(RESOLUTION_PRESETS) - 1:
+            self.custom_res_box.set_no_show_all(False)
+            self.custom_res_box.show_all()
+        else:
+            self.custom_res_box.hide()
+            if idx >= 0:
+                _, w, h = RESOLUTION_PRESETS[idx]
+                self.width_entry.set_value(w)
+                self.height_entry.set_value(h)
+
+    def _on_refresh_preset_changed(self, combo):
+        idx = combo.get_active()
+        if idx == len(REFRESH_PRESETS):
+            self.custom_refresh_box.set_no_show_all(False)
+            self.custom_refresh_box.show_all()
+        else:
+            self.custom_refresh_box.hide()
+            if 0 <= idx < len(REFRESH_PRESETS):
+                self.refresh_entry.set_value(REFRESH_PRESETS[idx])
+
+    def get_values(self) -> dict:
+        res_idx = self.res_combo.get_active()
+        if res_idx == len(RESOLUTION_PRESETS) - 1:
+            width = int(self.width_entry.get_value())
+            height = int(self.height_entry.get_value())
+        else:
+            _, width, height = RESOLUTION_PRESETS[res_idx]
+
+        refresh_idx = self.refresh_combo.get_active()
+        if refresh_idx == len(REFRESH_PRESETS):
+            refresh = self.refresh_entry.get_value()
+        else:
+            refresh = float(REFRESH_PRESETS[refresh_idx])
+
+        pos_idx = self.pos_combo.get_active()
+        position = POSITION_OPTIONS[pos_idx][1] if pos_idx >= 0 else "right-of"
+
+        rel_text = self.relative_combo.get_active_text()
+        relative_to = rel_text.split(" (")[0] if rel_text else None
+
+        return {
+            "width": width,
+            "height": height,
+            "refresh": refresh,
             "position": position,
             "relative_to": relative_to,
             "reduced_blanking": self.reduced_check.get_active(),

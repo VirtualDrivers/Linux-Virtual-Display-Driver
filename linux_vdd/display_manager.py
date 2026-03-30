@@ -656,6 +656,7 @@ class DisplayManager:
             except TypeError:
                 continue
         self._verify_state()
+        self._adopt_untracked_virtual_displays()
 
     def _verify_state(self):
         try:
@@ -670,6 +671,86 @@ class DisplayManager:
                              out.current_mode.height == vd.height)
             else:
                 vd.active = False
+
+    def _adopt_untracked_virtual_displays(self):
+        """Detect active virtual displays from NVIDIA config not tracked by the app.
+
+        If the xorg.conf lists virtual outputs that are currently active but
+        not in our managed_displays list, adopt them so they show in the GUI.
+        """
+        if not _nvidia_conf_exists():
+            return
+
+        conf_outputs = _nvidia_read_conf_outputs()
+        if not conf_outputs:
+            return
+
+        # Determine which conf outputs are virtual (not the primary)
+        try:
+            outputs = parse_xrandr()
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            return
+
+        # Find the primary physical output
+        primary_name = None
+        for o in outputs:
+            if o.active and o.name in conf_outputs:
+                # The physical display has a larger physical size
+                # Virtual EDID reports 53x30mm, real displays are much larger
+                result = _run(["xrandr", "--verbose"], check=False)
+                for line in result.stdout.splitlines():
+                    if line.startswith(o.name) and "mm x" in line:
+                        import re as _re
+                        size_m = _re.search(r'(\d+)mm x (\d+)mm', line)
+                        if size_m:
+                            w_mm = int(size_m.group(1))
+                            # VDD Virtual EDID is 53x30mm; real displays are larger
+                            if w_mm > 100:
+                                primary_name = o.name
+                                break
+                if primary_name:
+                    break
+
+        if not primary_name:
+            # Fallback: use xrandr primary
+            for o in outputs:
+                result = _run(["xrandr"], check=False)
+                for line in result.stdout.splitlines():
+                    if o.name in line and "primary" in line:
+                        primary_name = o.name
+                        break
+                if primary_name:
+                    break
+
+        if not primary_name:
+            return
+
+        virtual_output_names = [o for o in conf_outputs if o != primary_name]
+        tracked_names = {vd.output for vd in self.managed_displays}
+        output_map = {o.name: o for o in outputs}
+
+        adopted = False
+        for vname in virtual_output_names:
+            if vname in tracked_names:
+                continue
+            out = output_map.get(vname)
+            if not out or not out.active or not out.current_mode:
+                continue
+            mode = out.current_mode
+            vd = VirtualDisplay(
+                output=vname,
+                mode_name=mode.name,
+                width=mode.width,
+                height=mode.height,
+                refresh=mode.refresh,
+                position="",
+                active=True,
+            )
+            self.managed_displays.append(vd)
+            adopted = True
+
+        if adopted:
+            self._save_state()
 
     def _save_state(self):
         _save_config(self.managed_displays)
@@ -686,18 +767,42 @@ class DisplayManager:
         return not _nvidia_conf_exists()
 
     def nvidia_get_virtual_output_candidates(self) -> list[str]:
-        """Get NVIDIA-provider output names suitable for virtual displays.
+        """Get NVIDIA output names that can be used as virtual displays.
 
-        Returns disconnected outputs on the NVIDIA provider.
+        Returns outputs not currently used as the primary physical display.
+        Includes common NVIDIA output names not yet in the config.
         """
         outputs = parse_xrandr()
+        primary = self.nvidia_get_primary_output()
+        existing_conf = _nvidia_read_conf_outputs()
+
+        # Start with currently visible disconnected/inactive NVIDIA outputs
         candidates = []
         for o in outputs:
-            if o.active:
+            if o.name == primary:
                 continue
             provider = self._provider_map.get(o.name, "")
-            if provider == "nvidia":
+            if provider == "nvidia" and not o.active:
                 candidates.append(o.name)
+
+        # Also offer common NVIDIA output names not already configured/visible
+        # NVIDIA GPUs typically have DP-0..DP-7 and HDMI-0..HDMI-1
+        common_outputs = [
+            "DP-0", "DP-1", "DP-2", "DP-3", "DP-4", "DP-5",
+            "HDMI-0", "HDMI-1",
+        ]
+        visible_names = {o.name for o in outputs}
+        for name in common_outputs:
+            if name == primary:
+                continue
+            if name in [c for c in candidates]:
+                continue
+            if name in visible_names:
+                # Already visible but not a candidate yet (it's active/used)
+                continue
+            # Not currently visible — can be added to ConnectedMonitor
+            candidates.append(name)
+
         return candidates
 
     def nvidia_get_primary_output(self) -> Optional[str]:
@@ -717,6 +822,7 @@ class DisplayManager:
 
         Args:
             virtual_outputs: Output names to make available as virtual displays.
+                These are merged with any existing virtual outputs in the config.
 
         Returns:
             Status message.
@@ -727,6 +833,12 @@ class DisplayManager:
         primary = self.nvidia_get_primary_output()
         if not primary:
             raise RuntimeError("Could not determine primary output.")
+
+        # Merge with existing virtual outputs from config
+        existing = _nvidia_read_conf_outputs()
+        existing_virtual = [o for o in existing if o != primary]
+        merged = list(dict.fromkeys(existing_virtual + virtual_outputs))
+        virtual_outputs = merged
 
         # Write the virtual EDID binary
         edid_bytes = _generate_virtual_edid()

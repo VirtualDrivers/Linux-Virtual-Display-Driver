@@ -77,16 +77,35 @@ class NvidiaSetupDialog(Gtk.Dialog):
         # Output selection
         content.pack_start(self._make_section_label("Select Virtual Outputs"), False, False, 4)
 
+        # Show already-configured virtual outputs
+        from .display_manager import _nvidia_read_conf_outputs
+        existing_conf = _nvidia_read_conf_outputs()
+        primary = manager.nvidia_get_primary_output()
+        existing_virtual = [o for o in existing_conf if o != primary]
+
         candidates = manager.nvidia_get_virtual_output_candidates()
         self.output_checks: list[tuple[Gtk.CheckButton, str]] = []
 
-        if candidates:
-            for name in candidates:
+        if existing_virtual:
+            content.pack_start(self._make_dim_label("Already configured:"), False, False, 0)
+            for name in existing_virtual:
                 cb = Gtk.CheckButton(label=name)
-                cb.set_active(True)  # Select all by default
+                cb.set_active(True)
+                cb.set_sensitive(False)  # Can't deselect existing
+                content.pack_start(cb, False, False, 0)
+
+        # Filter candidates to only show ones not already configured
+        new_candidates = [c for c in candidates if c not in existing_virtual]
+
+        if new_candidates:
+            if existing_virtual:
+                content.pack_start(self._make_dim_label("Add more outputs:"), False, False, 4)
+            for name in new_candidates:
+                cb = Gtk.CheckButton(label=name)
+                cb.set_active(not existing_virtual)  # Auto-select only on first setup
                 content.pack_start(cb, False, False, 0)
                 self.output_checks.append((cb, name))
-        else:
+        elif not existing_virtual:
             no_out = Gtk.Label(label="No additional NVIDIA outputs found (only HDMI/DP on the GPU).")
             no_out.set_halign(Gtk.Align.START)
             no_out.get_style_context().add_class("dim-label")
@@ -116,6 +135,12 @@ class NvidiaSetupDialog(Gtk.Dialog):
         label = Gtk.Label()
         label.set_markup(f"<b>{text}</b>")
         label.set_halign(Gtk.Align.START)
+        return label
+
+    def _make_dim_label(self, text: str) -> Gtk.Label:
+        label = Gtk.Label(label=text)
+        label.set_halign(Gtk.Align.START)
+        label.get_style_context().add_class("dim-label")
         return label
 
     def get_selected_outputs(self) -> list[str]:

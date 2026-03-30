@@ -385,6 +385,30 @@ class MainWindow(Gtk.ApplicationWindow):
                     "Please log out and back in, then try again."
                 )
                 return
+            # If no available outputs, offer to add more via setup
+            if not self.manager.get_available_outputs():
+                candidates = self.manager.nvidia_get_virtual_output_candidates()
+                if candidates:
+                    dialog = Gtk.MessageDialog(
+                        transient_for=self, modal=True,
+                        message_type=Gtk.MessageType.INFO,
+                        buttons=Gtk.ButtonsType.NONE,
+                        text="No available outputs",
+                    )
+                    dialog.format_secondary_text(
+                        "All configured virtual outputs are in use.\n\n"
+                        "You can add more virtual outputs through the "
+                        "NVIDIA setup. A logout/login will be required "
+                        "for new outputs to become available."
+                    )
+                    dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+                    btn = dialog.add_button("Add More Outputs", Gtk.ResponseType.OK)
+                    btn.get_style_context().add_class("suggested-action")
+                    response = dialog.run()
+                    dialog.destroy()
+                    if response == Gtk.ResponseType.OK:
+                        self._on_nvidia_setup()
+                    return
 
         dialog = AddDisplayDialog(self, self.manager)
         response = dialog.run()

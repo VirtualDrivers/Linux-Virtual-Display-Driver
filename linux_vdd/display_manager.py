@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional
@@ -66,6 +67,12 @@ XORG_CONF_DIR = Path("/etc/X11/xorg.conf.d")
 XORG_CONF_FILE = XORG_CONF_DIR / "99-linux-vdd.conf"
 EDID_DIR = Path("/usr/share/linux-vdd")
 EDID_FILE = EDID_DIR / "virtual-edid.bin"
+
+# GDM monitors.xml paths (tried in order)
+GDM_CONFIG_DIRS = [
+    Path("/var/lib/gdm3/.config"),
+    Path("/var/lib/gdm/.config"),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +223,209 @@ def _pkexec_remove_file(path: str):
     result = _run(["pkexec", "rm", "-f", path], check=False)
     if result.returncode != 0:
         raise RuntimeError(f"Failed to remove {path}: {result.stderr.strip()}")
+
+
+# ---------------------------------------------------------------------------
+# GDM monitors.xml management
+# ---------------------------------------------------------------------------
+
+def _find_gdm_config_dir() -> Optional[Path]:
+    """Find the GDM config directory."""
+    for d in GDM_CONFIG_DIRS:
+        if d.exists():
+            return d
+    return None
+
+
+def _get_real_monitor_info(primary_output: str) -> Optional[dict]:
+    """Get monitor vendor/product/serial from xrandr verbose output."""
+    try:
+        result = _run(["xrandr", "--verbose"], check=False)
+    except FileNotFoundError:
+        return None
+
+    current_output = None
+    info: dict = {}
+    for line in result.stdout.splitlines():
+        m = _OUTPUT_RE.match(line)
+        if m:
+            if current_output == primary_output and info:
+                return info
+            current_output = m.group(1)
+            info = {}
+            continue
+        if current_output != primary_output:
+            continue
+        # Parse EDID-derived info from verbose output
+        line_stripped = line.strip()
+        if line_stripped.startswith("Manufacturer:"):
+            info["vendor"] = line_stripped.split(":", 1)[1].strip()
+        elif line_stripped.startswith("Model:"):
+            # Model can be hex or name
+            val = line_stripped.split(":", 1)[1].strip()
+            info["product"] = val
+        elif line_stripped.startswith("Serial Number:"):
+            val = line_stripped.split(":", 1)[1].strip()
+            info["serial"] = val
+
+    # Check last output
+    if current_output == primary_output and info:
+        return info
+    return None
+
+
+def _read_user_monitors_xml() -> Optional[str]:
+    """Read the current user's monitors.xml if it exists."""
+    user_monitors = Path.home() / ".config" / "monitors.xml"
+    if user_monitors.exists():
+        try:
+            return user_monitors.read_text()
+        except OSError:
+            pass
+    return None
+
+
+def _generate_gdm_monitors_xml(primary_output: str, virtual_outputs: list[str]) -> str:
+    """Generate a monitors.xml for GDM that sets the real display as primary.
+
+    The virtual outputs are configured as disabled so GDM only shows
+    the login screen on the real physical display.
+    """
+    # Try to read the user's current monitors.xml first - it has the correct
+    # monitor specs. We just need to ensure the real display is primary.
+    user_xml = _read_user_monitors_xml()
+    if user_xml:
+        # Parse and fix: ensure primary is on the real output, not virtual
+        try:
+            root = ET.fromstring(user_xml)
+            for config in root.findall("configuration"):
+                has_primary = False
+                for lm in config.findall("logicalmonitor"):
+                    monitor = lm.find("monitor")
+                    if monitor is None:
+                        continue
+                    spec = monitor.find("monitorspec")
+                    if spec is None:
+                        continue
+                    connector = spec.find("connector")
+                    if connector is None:
+                        continue
+                    connector_name = connector.text or ""
+
+                    # Remove primary from virtual outputs
+                    primary_elem = lm.find("primary")
+                    if connector_name in virtual_outputs:
+                        if primary_elem is not None:
+                            lm.remove(primary_elem)
+                    elif connector_name == primary_output:
+                        # Set primary on real output
+                        if primary_elem is None:
+                            primary_elem = ET.SubElement(lm, "primary")
+                        primary_elem.text = "yes"
+                        has_primary = True
+
+                # If no primary was set (real output not in config), set it
+                if not has_primary:
+                    for lm in config.findall("logicalmonitor"):
+                        monitor = lm.find("monitor")
+                        if monitor is None:
+                            continue
+                        spec = monitor.find("monitorspec")
+                        if spec is None:
+                            continue
+                        connector = spec.find("connector")
+                        if connector is None:
+                            continue
+                        if connector.text not in virtual_outputs:
+                            primary_elem = ET.SubElement(lm, "primary")
+                            primary_elem.text = "yes"
+                            break
+
+            ET.indent(root, space="  ")
+            return '<?xml version="1.0"?>\n' + ET.tostring(root, encoding="unicode")
+        except ET.ParseError:
+            pass
+
+    # Fallback: generate a minimal monitors.xml from xrandr info
+    outputs = parse_xrandr()
+    real_output = None
+    for o in outputs:
+        if o.name == primary_output and o.active and o.current_mode:
+            real_output = o
+            break
+
+    if not real_output or not real_output.current_mode:
+        # Last resort: just use first active non-virtual output
+        for o in outputs:
+            if o.active and o.current_mode and o.name not in virtual_outputs:
+                real_output = o
+                break
+
+    if not real_output or not real_output.current_mode:
+        return ""
+
+    mode = real_output.current_mode
+    # Get monitor EDID info
+    monitor_info = _get_real_monitor_info(real_output.name) or {}
+    vendor = monitor_info.get("vendor", "unknown")
+    product = monitor_info.get("product", "unknown")
+    serial = monitor_info.get("serial", "0x00000000")
+
+    return f'''\
+<monitors version="2">
+  <configuration>
+    <logicalmonitor>
+      <x>0</x>
+      <y>0</y>
+      <scale>1</scale>
+      <primary>yes</primary>
+      <monitor>
+        <monitorspec>
+          <connector>{real_output.name}</connector>
+          <vendor>{vendor}</vendor>
+          <product>{product}</product>
+          <serial>{serial}</serial>
+        </monitorspec>
+        <mode>
+          <width>{mode.width}</width>
+          <height>{mode.height}</height>
+          <rate>{mode.refresh:.3f}</rate>
+        </mode>
+      </monitor>
+    </logicalmonitor>
+  </configuration>
+</monitors>
+'''
+
+
+def _write_gdm_monitors_xml(primary_output: str, virtual_outputs: list[str]):
+    """Write monitors.xml to GDM config so the login screen uses the real display."""
+    gdm_dir = _find_gdm_config_dir()
+    if not gdm_dir:
+        return  # No GDM found, skip silently
+
+    xml_content = _generate_gdm_monitors_xml(primary_output, virtual_outputs)
+    if not xml_content:
+        return
+
+    gdm_monitors = str(gdm_dir / "monitors.xml")
+    try:
+        _pkexec_write_file(gdm_monitors, xml_content)
+    except RuntimeError:
+        pass  # Non-fatal: login screen may show on wrong display but session works
+
+
+def _remove_gdm_monitors_xml():
+    """Remove the GDM monitors.xml we wrote."""
+    gdm_dir = _find_gdm_config_dir()
+    if not gdm_dir:
+        return
+    gdm_monitors = str(gdm_dir / "monitors.xml")
+    if Path(gdm_monitors).exists():
+        try:
+            _pkexec_remove_file(gdm_monitors)
+        except RuntimeError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -526,6 +736,9 @@ class DisplayManager:
         conf = _nvidia_generate_conf(primary, virtual_outputs)
         _pkexec_write_file(str(XORG_CONF_FILE), conf)
 
+        # Write GDM monitors.xml so the login screen stays on the real display
+        _write_gdm_monitors_xml(primary, virtual_outputs)
+
         return (
             f"Configuration written.\n\n"
             f"Primary output: {primary}\n"
@@ -549,6 +762,9 @@ class DisplayManager:
                 _pkexec_remove_file(path)
             except RuntimeError as e:
                 errors.append(str(e))
+
+        # Clean up GDM monitors.xml since virtual outputs are being removed
+        _remove_gdm_monitors_xml()
 
         if errors:
             raise RuntimeError("\n".join(errors))
@@ -712,6 +928,13 @@ class DisplayManager:
         )
         self.managed_displays.append(vd)
         self._save_state()
+
+        # Update GDM monitors.xml so login screen stays on real display
+        primary = self.get_primary_output()
+        if primary:
+            virtual_names = [d.output for d in self.managed_displays]
+            _write_gdm_monitors_xml(primary.name, virtual_names)
+
         return vd
 
     def remove_display(self, vd: VirtualDisplay):
